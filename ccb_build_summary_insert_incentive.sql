@@ -9,7 +9,7 @@ set nocount on
 
 drop table if exists #Incentives_Import_Stage_tmp
 create table #Incentives_Import_Stage_tmp (
-        [EntityTypeName]               nvarchar(255)
+        [EntityTypeDisplayName]               nvarchar(255)
        ,[ClientName]                   nvarchar(255)
        ,[PlanName]                     nvarchar(255)
        ,[TreatmentCode]	               nvarchar(255)
@@ -26,7 +26,7 @@ create table #Incentives_Import_Stage_tmp (
 
 
 exec ('insert into #Incentives_Import_Stage_tmp
-( EntityTypeName
+( EntityTypeDisplayName
 , ClientName
 , PlanName
 , TreatmentCode
@@ -45,13 +45,16 @@ select [Hierarchy], [Client Name], [Plan Name], [Treatment Code], [DI Savings]
 from ' + @import_table_name)
 
 drop table if exists #tmp1
-select EntityTypeID, cln.Id as ClientID, ClientName, pln.Id as PlanID, PlanName
+select EntityTypeID, EntityTypeName, cln.Id as ClientID, ClientName, pln.Id as PlanID, PlanName
      , case when len(TreatmentCode) = 5 then concat(9, TreatmentCode) else TreatmentCode end as ProcedureID
-	 , percentage_of_savings, maximum_incentive_amount, minimum_incentive_amount
-     , cast(cast(static_tier_1 as decimal(18,2)) as nvarchar) as static_tier_1
-	 , cast(cast(static_tier_2 as decimal(18,2)) as nvarchar) as static_tier_2
-	 , cast(cast(static_tier_3 as decimal(18,2)) as nvarchar) as static_tier_3
-	 , IncentiveType
+	 , isnull(cast(percentage_of_savings as varchar), '0') as percentage_of_savings
+	 , isnull(cast(maximum_incentive_amount as varchar), '0') as maximum_incentive_amount
+	 , isnull(cast(minimum_incentive_amount as varchar), '0') as minimum_incentive_amount
+     , isnull(cast(cast(static_tier_1 as decimal(18,2)) as varchar), 'NULL') as static_tier_1
+	 , isnull(cast(cast(static_tier_2 as decimal(18,2)) as varchar), 'NULL') as static_tier_2
+	 , isnull(cast(cast(static_tier_3 as decimal(18,2)) as varchar), 'NULL') as static_tier_3
+     , case when IncentiveType = 'dynamic' then 'dynamic' else 'smartshopper' end as provider_type
+	 , case when IncentiveType = 'cto' then 'false' else 'true' end as show_incentives
 	 , ChangeOperationID
 	 , Ticket
 into #tmp1
@@ -62,98 +65,133 @@ from #Incentives_Import_Stage_tmp dat
 	         on pln.[Name] = dat.PlanName
 			and cln.Id = pln.Client_Id
      inner join DataStage.ccb.EntityType ent
-	         on ent.EntityTypeName = dat.EntityTypeName
+	         on ent.EntityTypeDisplayName = dat.EntityTypeDisplayName
 	 inner join DataStage.ccb.ChangeOperation cop
 	         on cop.ChangeOperationName = dat.ChangeOperationName
 
-drop table if exists #Incentives_Import_Stage
-select *
-     , case when IncentiveType = 'dynamic' then 'dynamic' else 'smartshopper' end as provider_type
-	 , case when IncentiveType = 'cto' then 'false' else 'true' end as show_incentives
-into #Incentives_Import_Stage
-from (select EntityTypeID, ClientID as EntityID, ClientName as EntityName
-           , ProcedureID
-      	   , isnull(percentage_of_savings, 0) as percentage_of_savings
-		   , isnull(maximum_incentive_amount, 0) as maximum_incentive_amount
-		   , isnull(minimum_incentive_amount, 0) as minimum_incentive_amount
-      	   , static_tier_1, static_tier_2, static_tier_3, IncentiveType, ChangeOperationID, Ticket
-      from #tmp1
-      where EntityTypeID in (2, 4)
-      union
-      select EntityTypeID, PlanID as EntityID, PlanName as EntityName
-           , ProcedureID
-      	   , isnull(percentage_of_savings, 0) as percentage_of_savings
-		   , isnull(maximum_incentive_amount, 0) as maximum_incentive_amount
-		   , isnull(minimum_incentive_amount, 0) as minimum_incentive_amount
-      	   , static_tier_1, static_tier_2, static_tier_3, IncentiveType, ChangeOperationID, Ticket
-      from #tmp1
-      where EntityTypeID in (3, 5)) t
-
 drop table if exists #Unpivot_New
-select EntityTypeID, EntityID, EntityName, ProcedureID, Ticket, ChangeOperationID, ConfigName, ConfigValue
+select EntityTypeID, EntityTypeName, EntityID, EntityName, ProcedureID, Ticket, ChangeOperationID, ConfigName
+     , case when ConfigValue = 'NULL' then NULL else ConfigValue end as ConfigValue
 into #Unpivot_New
 from (
-select EntityTypeID, EntityID, EntityName, ProcedureID, Ticket, ChangeOperationID
-     , cast(show_incentives as varchar) as show_incentives
-	 , cast(provider_type as varchar) as provider_type
-	 , cast(percentage_of_savings as varchar) as percentage_of_savings
+select EntityTypeID, EntityTypeName, ClientID as EntityID, ClientName as EntityName
+     , ProcedureID
+	 , cast(percentage_of_savings    as varchar) as percentage_of_savings
 	 , cast(maximum_incentive_amount as varchar) as maximum_incentive_amount
 	 , cast(minimum_incentive_amount as varchar) as minimum_incentive_amount
-     , case when EntityTypeID = 5 then isnull(cast(static_tier_1 as varchar), 'NULL') else null end as static_tier_1
-	 , case when EntityTypeID = 5 then isnull(cast(static_tier_2 as varchar), 'NULL') else null end as static_tier_2
-	 , case when EntityTypeID = 5 then isnull(cast(static_tier_3 as varchar), 'NULL') else null end as static_tier_3
-from #Incentives_Import_Stage
+	 , cast(provider_type as varchar) as provider_type
+	 , cast(show_incentives as varchar) as show_incentives
+	 , cast(static_tier_1 as varchar) as static_tier_1
+	 , cast(static_tier_2 as varchar) as static_tier_2
+	 , cast(static_tier_3 as varchar) as static_tier_3
+	 , ChangeOperationID, Ticket
+from #tmp1
+where EntityTypeName in ('client', 'treatment_client')
+union
+select EntityTypeID, EntityTypeName, PlanID as EntityID, PlanName as EntityName
+     , ProcedureID
+	 , cast(percentage_of_savings    as varchar) as percentage_of_savings
+	 , cast(maximum_incentive_amount as varchar) as maximum_incentive_amount
+	 , cast(minimum_incentive_amount as varchar) as minimum_incentive_amount
+	 , cast(provider_type as varchar) as provider_type
+	 , cast(show_incentives as varchar) as show_incentives
+	 , cast(static_tier_1 as varchar) as static_tier_1
+	 , cast(static_tier_2 as varchar) as static_tier_2
+	 , cast(static_tier_3 as varchar) as static_tier_3
+	 , ChangeOperationID, Ticket
+from #tmp1
+where EntityTypeName in ('plan', 'treatment_plan')
 ) t
 unpivot
 (ConfigValue for ConfigName in (show_incentives, provider_type, percentage_of_savings, maximum_incentive_amount, minimum_incentive_amount
                               , static_tier_1, static_tier_2, static_tier_3)
 ) u
 
-drop table if exists #Unpivot_Old
-select EntityTypeID, EntityID, ProcedureID, ConfigName, ConfigValue
-into #Unpivot_Old
-from (
-select tbl.EntityTypeID, tbl.EntityID, tbl.ProcedureID
-     , cast(show_incentives as varchar) as show_incentives
-	 , cast(provider_type as varchar) as provider_type
-	 , cast(percentage_of_savings as varchar) as percentage_of_savings
-	 , cast(maximum_incentive_amount as varchar) as maximum_incentive_amount
-	 , cast(minimum_incentive_amount as varchar) as minimum_incentive_amount
-     , case when tbl.EntityTypeID = 5 then isnull(cast(static_tier_1 as varchar), 'NULL') else null end as static_tier_1
-	 , case when tbl.EntityTypeID = 5 then isnull(cast(static_tier_2 as varchar), 'NULL') else null end as static_tier_2
-	 , case when tbl.EntityTypeID = 5 then isnull(cast(static_tier_3 as varchar), 'NULL') else null end as static_tier_3
-from (select distinct EntityTypeID, EntityID, ProcedureID from #Unpivot_New) tbl
-     inner join DataStage.ccb.vw_IncentiveType_QA dat
-	         on dat.EntityID = tbl.EntityID
-			and dat.EntityTypeID = tbl.EntityTypeID
-			and isnull(dat.ProcedureID, 0) = isnull(tbl.ProcedureID, 0)
-) t
-unpivot
-(ConfigValue for ConfigName in (show_incentives, provider_type, percentage_of_savings, maximum_incentive_amount, minimum_incentive_amount
-                              , static_tier_1, static_tier_2, static_tier_3)
-) u
+drop table if exists #Configurations
+select EntityTypeID
+     , EntityTypeName
+	 , EntityID
+	 , EntityName
+	 , ProcedureID
+	 , cfg.ConfigID
+	 , tbl.ConfigName
+	 , cast(ConfigValue as varchar) as ConfigValueNew
+	 , cast(coalesce(csv.SettingValue, psv.SettingValue, tcv.SettingValue, tpv.SettingValue) as varchar) as ConfigValueOld
+	 , tbl.Ticket
+	 , tbl.ChangeOperationID
+into #Configurations
+from #Unpivot_New tbl
+     inner join ccb.Config cfg
+	         on cfg.ConfigName = tbl.ConfigName
+	 inner join CAV22.config.SettingDefinition def
+	         on def.[Name] = cfg.ConfigName
+	 left  join CAV22.config.ClientSettingValue csv
+	         on csv.ClientId = tbl.EntityID
+			and tbl.EntityTypeName = 'Client'
+			and csv.SettingDefinitionId = def.Id
+	 left  join CAV22.config.PlanSettingValue psv
+	         on psv.PlanId = tbl.EntityID
+			and tbl.EntityTypeName = 'plan'
+			and psv.SettingDefinitionId = def.Id
+	 left  join CAV22.config.TreatmentClientSettingValue tcv
+	         on tcv.ClientId = tbl.EntityID
+			and tbl.EntityTypeName = 'treatment_client'
+			and tcv.SettingDefinitionId = def.Id
+			and tbl.ProcedureID = (case when len(tcv.TreatmentCode) = 5 then concat(9, tcv.TreatmentCode) else tcv.TreatmentCode end)
+	 left  join CAV22.config.TreatmentPlanSettingValue tpv
+	         on tpv.PlanId = tbl.EntityID
+			and tbl.EntityTypeName = 'treatment_plan'
+			and tpv.SettingDefinitionId = def.Id
+			and tbl.ProcedureID = (case when len(tpv.TreatmentCode) = 5 then concat(9, tpv.TreatmentCode) else tpv.TreatmentCode end)
+where cfg.ConfigGroup = 'configuration'
+
+
+drop table if exists #Incentive_Amounts
+select EntityTypeID
+     , EntityTypeName
+	 , EntityID
+	 , EntityName
+	 , ProcedureID
+	 , cfg.ConfigID
+	 , tbl.ConfigName
+	 , cast(ConfigValue as varchar) as ConfigValueNew
+	 , cast(ica.Amount as varchar) as ConfigValueOld
+	 , tbl.Ticket
+	 , tbl.ChangeOperationID
+into #Incentive_Amounts
+from #Unpivot_New tbl
+     inner join ccb.Config cfg
+	         on cfg.ConfigName = tbl.ConfigName
+	 left join CAV22.dbo.IncentiveTiers ict
+	         on ict.Plan_Id = EntityID
+	        and ict.TierNumber = (case when tbl.ConfigName = 'static_tier_1' then 1
+			                           when tbl.ConfigName = 'static_tier_2' then 2
+									   when tbl.ConfigName = 'static_tier_3' then 3
+									   else null end)
+	 left join CAV22.dbo.IncentiveAmounts ica
+	         on ica.Procedure_Id = tbl.ProcedureID
+			and ica.IncentiveTier_Id = ict.Id
+where cfg.ConfigGroup = 'incentive_amounts'
+  and tbl.EntityTypeName = 'treatment_plan'
 
 drop table if exists #Summary_Insert
-select 
-       new.EntityTypeID
-     , new.EntityID
-	 , new.EntityName
-	 , new.ProcedureID
-	 , new.ChangeOperationID
-	 , con.ConfigID
-	 , new.ConfigName
-	 , new.ConfigValue as ConfigValueNew
-	 , old.ConfigValue as ConfigValueOld
-	 , new.Ticket
+select EntityTypeID
+     , EntityID
+	 , EntityName
+	 , ProcedureID
+	 , ConfigID
+	 , ConfigValueNew
+	 , ConfigValueOld
+	 , case when ConfigValueNew is null and ConfigValueOld is not null then (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'delete')
+	        when ConfigValueNew is not null and ConfigValueOld is null then (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'insert')
+			else (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'update')
+		end as ChangeOperationID
+	 , Ticket
 into #Summary_Insert
-from #Unpivot_New new
-     inner join DataStage.ccb.Config con
-	         on con.ConfigName = new.ConfigName
-     left  join #Unpivot_Old old
-	         on new.EntityID = old.EntityID
-			and new.EntityTypeID = old.EntityTypeID
-			and isnull(new.ProcedureID, 0) = isnull(old.ProcedureID, 0)
-			and new.ConfigName = old.ConfigName
+from (select * from #Configurations
+      union all
+	  select * from #Incentive_Amounts) tbl
+where isnull(ConfigValueNew, 'NULL') <> isnull(ConfigValueOld, 'NULL')
 
 begin tran
 if @build_name is null
@@ -180,25 +218,25 @@ insert into DataStage.ccb.ConfigChangeBuildSummary (
 	Ticket)
 select @build_id as ConfigChangeBuildID
      , EntityTypeID
-	 , EntityID
+     , EntityID
 	 , EntityName
 	 , ProcedureID
 	 , ConfigID
 	 , ConfigValueNew
 	 , ConfigValueOld
-	 , ChangeOperationID
+     , ChangeOperationID
 	 , Ticket
 from #Summary_Insert
 commit
 
 declare @summary_insert_count nvarchar(255) = (select cast(count(*) as nvarchar) from #Summary_Insert)
 
-drop table #Incentives_Import_Stage
-drop table #Incentives_Import_Stage_tmp
-drop table #Summary_Insert
-drop table #tmp1
-drop table #Unpivot_New
-drop table #Unpivot_Old
+drop table if exists #Incentives_Import_Stage
+drop table if exists #Incentives_Import_Stage_tmp
+drop table if exists #Summary_Insert
+drop table if exists #tmp1
+drop table if exists #Unpivot_New
+drop table if exists #Unpivot_Old
 
 
 
@@ -232,4 +270,5 @@ print @import_table_full_print_string
 print @build_id_print_string
 print @build_name_print_string
 print @summary_insert_count_print
+
 end

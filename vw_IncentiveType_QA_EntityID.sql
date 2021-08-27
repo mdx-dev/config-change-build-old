@@ -29,12 +29,12 @@ select EntityTypeID
 			 and show_incentives = 'false'
 			 and t2.ProcedureID is null
 			then 1
-	        when EntityTypeID = 5
+	        when EntityTypeID = (select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName = 'treatment_plan')
 			 and provider_type = 'smartshopper'
 			 and show_incentives = 'true'
 			 and t2.ProcedureID is not null
 			then 2
-			when EntityTypeID in (2, 3, 4)
+			when EntityTypeID in ((select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName in ('treatment_client', 'plan', 'client')))
 			 and provider_type = 'smartshopper'
 			 and show_incentives = 'true'
 			then 2
@@ -60,7 +60,7 @@ select EntityTypeID
 	 , cast(cast([69] as decimal(18,2)) as smallint) as maximum_incentive_amount
 	 , cast(cast([70] as decimal(18,2)) as smallint) as percentage_of_savings
 from (
-select 5 as EntityTypeID
+select (select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName = 'treatment_plan') as EntityTypeID
      --, tbl.ClientID
      , tbl.PlanID as EntityID
 	 --, tbl.TreatmentCode
@@ -112,7 +112,7 @@ where pln.IsActive = 1
 		   --and tpv.TreatmentCode = tbl.TreatmentCode
 union all
 
-select 4 as EntityTypeID
+select (select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName = 'treatment_client') as EntityTypeID
      , tbl.ClientID as EntityID
 	 --, null as PlanID
 	 --, tbl.TreatmentCode
@@ -139,7 +139,7 @@ where ctc.IsActive = 1
 
 union all
 
-select 3 as EntityTypeID
+select (select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName = 'plan') as EntityTypeID
      --, pln.Client_Id as ClientID
      , pln.Id as EntityID
 	 --, null as TreatmentCode
@@ -160,7 +160,7 @@ where pln.IsActive = 1
   and cln.IsActive = 1
 union all
 
-select 2 as EntityTypeID
+select (select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName = 'client') as EntityTypeID
      , tbl.ClientID as EntityID
 	 --, null as TreatmentCode
 	 , null as ProcedureID
@@ -193,7 +193,7 @@ max(IncentiveAmount)
 for TierNumber in ([1], [2], [3])
 ) pvt
 ) t2
-on t1.EntityTypeID = 5
+on t1.EntityTypeID = (select EntityTypeID from DataStage.ccb.EntityType where EntityTypeName = 'treatment_plan')
 and t2.PlanID = t1.EntityID
 and t2.ProcedureID = t1.ProcedureID
 GO
