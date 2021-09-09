@@ -1,7 +1,7 @@
 use DataStage
 go
 
-create or alter procedure ccb.deploy_build (@build_id int) as
+create or alter procedure ccb.rollback_build (@build_id int) as
 begin
 
 set nocount on
@@ -24,6 +24,7 @@ on a.IncentiveTier_Id = b.Id
 where b.Plan_Id = 18722
 */
 
+
 drop table if exists #Build_Summary
 select bls.EntityTypeID
      , ent.EntityTypeName
@@ -34,10 +35,16 @@ select bls.EntityTypeID
 	 , bls.ConfigID
 	 , cfg.ConfigName
 	 , cfg.ConfigGroup
-	 , bls.ConfigValueNew
-	 , bls.ConfigValueOld
-	 , bls.ChangeOperationID
-	 , cop.ChangeOperationName
+	 , bls.ConfigValueNew as ConfigValueOld
+	 , bls.ConfigValueOld as ConfigValueNew
+	 , case when cop.ChangeOperationName = 'Insert' then (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'Delete')
+	        when cop.ChangeOperationName = 'Delete' then (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'Insert')
+			else bls.ChangeOperationID
+		end as ChangeOperationID
+	 , case when cop.ChangeOperationName = 'Insert' then 'Delete'
+	        when cop.ChangeOperationName = 'Delete' then 'Insert'
+			else cop.ChangeOperationName
+		end as ChangeOperationName
 	 , bls.Ticket
 into #Build_Summary
 from ccb.ConfigChangeBuildSummary bls
@@ -173,7 +180,7 @@ select ChangeOperationID
 	 , bls.ProcedureID as Procedure_Id
 	 , ict.Id as IncentiveTier_Id
 	 , 0 as incentive_step_complete
-	 , case when ica.ModifiedReason is not null then concat(ica.ModifiedReason, '; ', Ticket) else Ticket end as ModifiedReason
+	 , case when ica.ModifiedReason is not null then concat(ica.ModifiedReason, '; ', Ticket, ' Rollback') else concat(Ticket, ' Rollback') end as ModifiedReason
 into #Incentive_Amount_Upserts
 from #Build_Summary bls
      left  join CAV22.dbo.IncentiveTiers ict
@@ -210,7 +217,7 @@ from CAV22.dbo.IncentiveAmounts ica
 where upd.ChangeOperationName = 'update'
 
 update ccb.ConfigChangeBuild
-set IsDeployed = 1, DateLastDeployed = getdate()
+set IsDeployed = 0, DateLastRolledBack = getdate()
 where ConfigChangeBuildID = @build_id
 
 drop table if exists #Build_Summary
