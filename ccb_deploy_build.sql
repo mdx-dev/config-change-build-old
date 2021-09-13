@@ -6,6 +6,7 @@ begin
 
 set nocount on
 
+-- Grabbing ALL records for the chosen ConfigChangeBuildID from ccb.ConfigChangeBuildSummary
 drop table if exists #Build_Summary
 select bls.EntityTypeID
      , ent.EntityTypeName
@@ -33,6 +34,12 @@ from ccb.ConfigChangeBuildSummary bls
 	         on bls.ProcedureID = (case when len(tmc.Code) = 5 then concat(9, tmc.Code) else tmc.Code end)
 where ConfigChangeBuildID = @build_id
 
+
+---------------------------------------------------------------------------------------------------------------
+------------------------------------------ CONFIGURATION CHANGES ----------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+
+-- Grabbing build summary records pertaining to configurations and adding setting definitions necessary for config.Upsert procedures
 drop table if exists #Config_Upserts
 select EntityTypeName
      , EntityID
@@ -73,6 +80,8 @@ declare @modified_reason varchar(255)
 set @config_step = (select min(config_step) from #Config_Upserts)
 set @config_step_max = (select max(config_step) from #Config_Upserts)
 
+
+-- This loop updates configurations via the config.Upsert procedures using the transformed configuration records from the build summary
 while @config_step <= @config_step_max
 
 begin
@@ -138,6 +147,11 @@ begin
 	    set @config_step += 1
 end
 
+---------------------------------------------------------------------------------------------------------------
+----------------------------------------- INCENTIVE AMOUNTS CHANGES -------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+
+-- Grabbing records from the build summary pertaining to Incentive Amounts and transforming them to fit into IncentiveAmounts
 drop table if exists #Incentive_Amount_Upserts
 select ChangeOperationID
 	 , ChangeOperationName
@@ -164,17 +178,20 @@ from #Build_Summary bls
 where ConfigGroup = 'incentive_amounts'
   and EntityTypeName = 'treatment_plan'
 
+-- Deleting IncentiveAmount records 
 delete from CAV22.dbo.IncentiveAmounts
 where Id in (
 select IncentiveAmounts_Id
 from #Incentive_Amount_Upserts
 where ChangeOperationName = 'delete')
 
+-- Adding IncentiveAmount records
 insert into CAV22.dbo.IncentiveAmounts (Amount, NominalAmount, Active, IncentiveTier_Id, Procedure_Id, AddedBy, ModifiedReason, DateAdded)
 select Amount, 0.00 as NominalAmount, 1 as Active, IncentiveTier_Id, Procedure_Id, user as AddedBy, ModifiedReason, getdate() as DateAdded
 from #Incentive_Amount_Upserts
 where ChangeOperationName = 'insert'
 
+-- Updating IncentiveAmount records
 update ica
 set ica.Amount = upd.Amount
   , ica.DateModified = getdate()
@@ -185,6 +202,11 @@ from CAV22.dbo.IncentiveAmounts ica
 	         on upd.IncentiveAmounts_Id = ica.Id
 where upd.ChangeOperationName = 'update'
 
+---------------------------------------------------------------------------------------------------------------
+------------------------------------------ CONCLUDE BUILD CHANGES ---------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+
+-- Update the ConfigChangeBuild table to show the build has been deployed
 update ccb.ConfigChangeBuild
 set IsDeployed = 1, DateLastDeployed = getdate()
 where ConfigChangeBuildID = @build_id
