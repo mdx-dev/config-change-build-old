@@ -5,11 +5,10 @@ create or alter procedure ccb.build_summary_insert (@import_table_name nvarchar(
 begin
 
 set nocount on
---declare @import_table_name varchar(max) = '[DataStage].dbo.[IncentiveModifier_20210819_NO_ERRORS]'
 
 drop table if exists #Incentives_Import_Stage_tmp
 create table #Incentives_Import_Stage_tmp (
-        [EntityTypeDisplayName]               nvarchar(255)
+        [EntityTypeDisplayName]        nvarchar(255)
        ,[ClientName]                   nvarchar(255)
        ,[PlanName]                     nvarchar(255)
        ,[TreatmentCode]	               nvarchar(255)
@@ -24,7 +23,7 @@ create table #Incentives_Import_Stage_tmp (
        ,[Ticket]			           nvarchar(255)
 )
 
-
+-- Grab and transform the import records  into a format more suitable for SQL scripts
 exec ('insert into #Incentives_Import_Stage_tmp
 ( EntityTypeDisplayName
 , ClientName
@@ -44,6 +43,8 @@ select [Hierarchy], [Client Name], [Plan Name], [Treatment Code], [DI Savings]
      , [Incentive Type], [Modify Type], Ticket
 from ' + @import_table_name)
 
+-- More transformations, primarily checking for proper data types
+-- Adding setting values for provider_type and show_incentives based on the IncentiveType values
 drop table if exists #tmp1
 select EntityTypeID, EntityTypeName, cln.Id as ClientID, ClientName, pln.Id as PlanID, PlanName
      , case when len(TreatmentCode) = 5 then concat(9, TreatmentCode) else TreatmentCode end as ProcedureID
@@ -69,6 +70,7 @@ from #Incentives_Import_Stage_tmp dat
 	 inner join DataStage.ccb.ChangeOperation cop
 	         on cop.ChangeOperationName = dat.ChangeOperationName
 
+-- Unpivoting the import records
 drop table if exists #Unpivot_New
 select EntityTypeID, EntityTypeName, EntityID, EntityName, ProcedureID, Ticket, ChangeOperationID, ConfigName
      , case when ConfigValue = 'NULL' then NULL else ConfigValue end as ConfigValue
@@ -107,6 +109,7 @@ unpivot
                               , static_tier_1, static_tier_2, static_tier_3)
 ) u
 
+-- Transforming the imported configuration records so they will fit into ccb.ConfigChangeBuildSummary, as well as grabbing the previous setting values
 drop table if exists #Configurations
 select EntityTypeID
      , EntityTypeName
@@ -145,7 +148,7 @@ from #Unpivot_New tbl
 			and tbl.ProcedureID = (case when len(tpv.TreatmentCode) = 5 then concat(9, tpv.TreatmentCode) else tpv.TreatmentCode end)
 where cfg.ConfigGroup = 'configuration'
 
-
+-- Transforming the imported incentive amount values so they will fit into ccb.ConfigChangeBuildSummary, as well as grabbing the previous setting values
 drop table if exists #Incentive_Amounts
 select EntityTypeID
      , EntityTypeName
@@ -164,7 +167,7 @@ from #Unpivot_New tbl
 	         on cfg.ConfigName = tbl.ConfigName
 	 left join CAV22.dbo.IncentiveTiers ict
 	         on ict.Plan_Id = EntityID
-		and ict.IsActive = 1
+			and ict.IsActive = 1
 	        and ict.TierNumber = (case when tbl.ConfigName = 'static_tier_1' then 1
 			                           when tbl.ConfigName = 'static_tier_2' then 2
 									   when tbl.ConfigName = 'static_tier_3' then 3
@@ -175,6 +178,7 @@ from #Unpivot_New tbl
 where cfg.ConfigGroup = 'incentive_amounts'
   and tbl.EntityTypeName = 'treatment_plan'
 
+-- Combining all transformed record types into a single table to insert into ccb.ConfigChangeBuildSummary
 drop table if exists #Summary_Insert
 select EntityTypeID
      , EntityID
@@ -194,13 +198,16 @@ from (select * from #Configurations
 	  select * from #Incentive_Amounts) tbl
 where isnull(ConfigValueNew, 'NULL') <> isnull(ConfigValueOld, 'NULL')
 
+
+-------------------------------------------------------- INSERT PROCESS --------------------------------------------------------
 begin tran
+
+-- Automatically sets the build name if none are given
 if @build_name is null
 set @build_name = (select concat('Build ', (isnull(max(ConfigChangeBuildID), 0) + 1)) from DataStage.ccb.ConfigChangeBuild)
 
-
+-- Inserts the new build name and ID into ccb.ConfigChangeBuild and keeps track of the new ID to use for the records going into the build summary
 insert into DataStage.ccb.ConfigChangeBuild (BuildName)
---output inserted.ConfigChangeBuildID
 values (@build_name)
 declare @build_id int = (select top 1 ConfigChangeBuildID
                          from DataStage.ccb.ConfigChangeBuild
