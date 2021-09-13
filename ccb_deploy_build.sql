@@ -5,24 +5,6 @@ create or alter procedure ccb.deploy_build (@build_id int) as
 begin
 
 set nocount on
-/*
-select *
-into DataStage.ccb.PlanSettingValue_BACKUP
-from CAV22.config.PlanSettingValue
-where PlanId = 18722
-
-select *
-into DataStage.ccb.TreatmentPlanSettingValue_BACKUP
-from CAV22.config.TreatmentPlanSettingValue
-where PlanId = 18722
-
-select a.*
-into DataStage.ccb.IncentiveAmounts_BACKUP
-from CAV22.dbo.IncentiveAmounts a
-join CAV22.dbo.IncentiveTiers b
-on a.IncentiveTier_Id = b.Id
-where b.Plan_Id = 18722
-*/
 
 drop table if exists #Build_Summary
 select bls.EntityTypeID
@@ -75,8 +57,6 @@ from #Build_Summary bls
 	         on bls.EntityID = cln.Id
 			and bls.EntityTypeName in ('client', 'treatment_client')
 where ConfigGroup = 'configuration'
-
---select * from DataStage.ccb.Config_Upsert_Test_BACKUP
 
 declare @config_step int
 declare @config_step_max int
@@ -157,11 +137,6 @@ begin
 	    update #Config_Upserts set config_step_complete = 1 where config_step = @config_step
 	    set @config_step += 1
 end
-
---delete from CAV22.dbo.IncentiveAmounts where IncentiveTier_Id in (select Id from CAV22.dbo.IncentiveTiers where Plan_Id = 18722)
---insert into CAV22.dbo.IncentiveAmounts (Amount, NominalAmount, Active, IncentiveTier_Id, Procedure_Id, ModifiedReason)
---select Amount, NominalAmount, Active, IncentiveTier_Id, Procedure_Id, ModifiedReason
---from DataStage.ccb.IncentiveAmounts_BACKUP
 
 drop table if exists #Incentive_Amount_Upserts
 select ChangeOperationID
