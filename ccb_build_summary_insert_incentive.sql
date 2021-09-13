@@ -164,6 +164,7 @@ from #Unpivot_New tbl
 	         on cfg.ConfigName = tbl.ConfigName
 	 left join CAV22.dbo.IncentiveTiers ict
 	         on ict.Plan_Id = EntityID
+		and ict.IsActive = 1
 	        and ict.TierNumber = (case when tbl.ConfigName = 'static_tier_1' then 1
 			                           when tbl.ConfigName = 'static_tier_2' then 2
 									   when tbl.ConfigName = 'static_tier_3' then 3
