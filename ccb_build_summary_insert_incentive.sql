@@ -1,7 +1,7 @@
 use DataStage
 go
 
-create or alter procedure ccb.build_summary_insert (@import_table_name nvarchar(255), @build_name nvarchar(255) = null) as
+create or alter procedure ccb.build_detail_insert (@import_table_name nvarchar(255), @ticket nvarchar(255), @build_name nvarchar(255) = null) as
 begin
 
 set nocount on
@@ -20,7 +20,6 @@ create table #Incentives_Import_Stage_tmp (
        ,[static_tier_3]		           nvarchar(255)
        ,[IncentiveType]	               nvarchar(255)
        ,[ChangeOperationName]		   nvarchar(255)
-       ,[Ticket]			           nvarchar(255)
 )
 
 -- Grab and transform the import records  into a format more suitable for SQL scripts
@@ -36,11 +35,10 @@ exec ('insert into #Incentives_Import_Stage_tmp
 , static_tier_2
 , static_tier_3
 , IncentiveType
-, ChangeOperationName
-, Ticket)
+, ChangeOperationName)
 select [Hierarchy], [Client Name], [Plan Name], [Treatment Code], [DI Savings]
      , [DI Max Incentive], [DI Min Incentive], [Static Tier 1], [Static Tier 2], [Static Tier 3]
-     , [Incentive Type], [Modify Type], Ticket
+     , [Incentive Type], [Modify Type]
 from ' + @import_table_name)
 
 -- More transformations, primarily checking for proper data types
@@ -57,7 +55,6 @@ select EntityTypeID, EntityTypeName, cln.Id as ClientID, ClientName, pln.Id as P
      , case when IncentiveType = 'dynamic' then 'dynamic' else 'smartshopper' end as provider_type
 	 , case when IncentiveType = 'cto' then 'false' else 'true' end as show_incentives
 	 , ChangeOperationID
-	 , Ticket
 into #tmp1
 from #Incentives_Import_Stage_tmp dat
      inner join CAV22.dbo.Clients cln
@@ -72,7 +69,7 @@ from #Incentives_Import_Stage_tmp dat
 
 -- Unpivoting the import records
 drop table if exists #Unpivot_New
-select EntityTypeID, EntityTypeName, EntityID, EntityName, ProcedureID, Ticket, ChangeOperationID, ConfigName
+select EntityTypeID, EntityTypeName, EntityID, EntityName, ProcedureID, ChangeOperationID, ConfigName
      , case when ConfigValue = 'NULL' then NULL else ConfigValue end as ConfigValue
 into #Unpivot_New
 from (
@@ -86,7 +83,7 @@ select EntityTypeID, EntityTypeName, ClientID as EntityID, ClientName as EntityN
 	 , cast(static_tier_1 as varchar) as static_tier_1
 	 , cast(static_tier_2 as varchar) as static_tier_2
 	 , cast(static_tier_3 as varchar) as static_tier_3
-	 , ChangeOperationID, Ticket
+	 , ChangeOperationID
 from #tmp1
 where EntityTypeName in ('client', 'treatment_client')
 union
@@ -100,7 +97,7 @@ select EntityTypeID, EntityTypeName, PlanID as EntityID, PlanName as EntityName
 	 , cast(static_tier_1 as varchar) as static_tier_1
 	 , cast(static_tier_2 as varchar) as static_tier_2
 	 , cast(static_tier_3 as varchar) as static_tier_3
-	 , ChangeOperationID, Ticket
+	 , ChangeOperationID
 from #tmp1
 where EntityTypeName in ('plan', 'treatment_plan')
 ) t
@@ -109,7 +106,7 @@ unpivot
                               , static_tier_1, static_tier_2, static_tier_3)
 ) u
 
--- Transforming the imported configuration records so they will fit into ccb.ConfigChangeBuildSummary, as well as grabbing the previous setting values
+-- Transforming the imported configuration records so they will fit into ccb.ConfigChangeBuildDetail, as well as grabbing the previous setting values
 drop table if exists #Configurations
 select EntityTypeID
      , EntityTypeName
@@ -119,8 +116,7 @@ select EntityTypeID
 	 , cfg.ConfigID
 	 , tbl.ConfigName
 	 , cast(ConfigValue as varchar) as ConfigValueNew
-	 , cast(coalesce(csv.SettingValue, psv.SettingValue, tcv.SettingValue, tpv.SettingValue) as varchar) as ConfigValueOld
-	 , tbl.Ticket
+	 , cast(coalesce(tpv.SettingValue, tcv.SettingValue, psv.SettingValue, csv.SettingValue) as varchar) as ConfigValueOld
 	 , tbl.ChangeOperationID
 into #Configurations
 from #Unpivot_New tbl
@@ -130,7 +126,7 @@ from #Unpivot_New tbl
 	         on def.[Name] = cfg.ConfigName
 	 left  join CAV22.config.ClientSettingValue csv
 	         on csv.ClientId = tbl.EntityID
-			and tbl.EntityTypeName = 'Client'
+			and tbl.EntityTypeName = 'client'
 			and csv.SettingDefinitionId = def.Id
 	 left  join CAV22.config.PlanSettingValue psv
 	         on psv.PlanId = tbl.EntityID
@@ -148,7 +144,7 @@ from #Unpivot_New tbl
 			and tbl.ProcedureID = (case when len(tpv.TreatmentCode) = 5 then concat(9, tpv.TreatmentCode) else tpv.TreatmentCode end)
 where cfg.ConfigGroup = 'configuration'
 
--- Transforming the imported incentive amount values so they will fit into ccb.ConfigChangeBuildSummary, as well as grabbing the previous setting values
+-- Transforming the imported incentive amount values so they will fit into ccb.ConfigChangeBuildDetail, as well as grabbing the previous setting values
 drop table if exists #Incentive_Amounts
 select EntityTypeID
      , EntityTypeName
@@ -159,7 +155,6 @@ select EntityTypeID
 	 , tbl.ConfigName
 	 , cast(ConfigValue as varchar) as ConfigValueNew
 	 , cast(ica.Amount as varchar) as ConfigValueOld
-	 , tbl.Ticket
 	 , tbl.ChangeOperationID
 into #Incentive_Amounts
 from #Unpivot_New tbl
@@ -178,8 +173,8 @@ from #Unpivot_New tbl
 where cfg.ConfigGroup = 'incentive_amounts'
   and tbl.EntityTypeName = 'treatment_plan'
 
--- Combining all transformed record types into a single table to insert into ccb.ConfigChangeBuildSummary
-drop table if exists #Summary_Insert
+-- Combining all transformed record types into a single table to insert into ccb.ConfigChangeBuildDetail
+drop table if exists #Detail_Insert
 select EntityTypeID
      , EntityID
 	 , EntityName
@@ -191,8 +186,7 @@ select EntityTypeID
 	        when ConfigValueNew is not null and ConfigValueOld is null then (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'insert')
 			else (select ChangeOperationID from ccb.ChangeOperation where ChangeOperationName = 'update')
 		end as ChangeOperationID
-	 , Ticket
-into #Summary_Insert
+into #Detail_Insert
 from (select * from #Configurations
       union all
 	  select * from #Incentive_Amounts) tbl
@@ -206,14 +200,14 @@ begin tran
 if @build_name is null
 set @build_name = (select concat('Build ', (isnull(max(ConfigChangeBuildID), 0) + 1)) from DataStage.ccb.ConfigChangeBuild)
 
--- Inserts the new build name and ID into ccb.ConfigChangeBuild and keeps track of the new ID to use for the records going into the build summary
+-- Inserts the new build name and ID into ccb.ConfigChangeBuild and keeps track of the new ID to use for the records going into the build detail
 insert into DataStage.ccb.ConfigChangeBuild (BuildName)
 values (@build_name)
 declare @build_id int = (select top 1 ConfigChangeBuildID
                          from DataStage.ccb.ConfigChangeBuild
 						 where DateAdded = (select max(DateAdded) from DataStage.ccb.ConfigChangeBuild))
 
-insert into DataStage.ccb.ConfigChangeBuildSummary (
+insert into DataStage.ccb.ConfigChangeBuildDetail (
 	ConfigChangeBuildID,
 	EntityTypeID,
 	EntityID,
@@ -222,8 +216,7 @@ insert into DataStage.ccb.ConfigChangeBuildSummary (
 	ConfigID,
 	ConfigValueNew,
 	ConfigValueOld,
-	ChangeOperationID,
-	Ticket)
+	ChangeOperationID)
 select @build_id as ConfigChangeBuildID
      , EntityTypeID
      , EntityID
@@ -233,15 +226,14 @@ select @build_id as ConfigChangeBuildID
 	 , ConfigValueNew
 	 , ConfigValueOld
      , ChangeOperationID
-	 , Ticket
-from #Summary_Insert
+from #Detail_Insert
 commit
 
-declare @summary_insert_count nvarchar(255) = (select cast(count(*) as nvarchar) from #Summary_Insert)
+declare @detail_insert_count nvarchar(255) = (select cast(count(*) as nvarchar) from #Detail_Insert)
 
 drop table if exists #Incentives_Import_Stage
 drop table if exists #Incentives_Import_Stage_tmp
-drop table if exists #Summary_Insert
+drop table if exists #Detail_Insert
 drop table if exists #tmp1
 drop table if exists #Unpivot_New
 drop table if exists #Unpivot_Old
@@ -268,7 +260,7 @@ if @table_split_count = 2
 declare @import_table_full_print_string nvarchar(max) = N'Import Table Name: ' + @import_table_full
 declare @build_name_print_string nvarchar(max) = N'Build Name: ' + @build_name
 declare @build_id_print_string nvarchar(max) = N'Build ID: ' + cast(@build_id as nvarchar)
-declare @summary_insert_count_print nvarchar(max) = N'ConfigChangeBuildSummary Insert Count: ' + @summary_insert_count
+declare @detail_insert_count_print nvarchar(max) = N'ConfigChangeBuildDetail Insert Count: ' + @detail_insert_count
 
 print ( char(13) +
        N'------------------------------------------------------------------------------------------' + char(13) +
@@ -277,6 +269,6 @@ print ( char(13) +
 print @import_table_full_print_string
 print @build_id_print_string
 print @build_name_print_string
-print @summary_insert_count_print
+print @detail_insert_count_print
 
 end
