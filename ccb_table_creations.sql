@@ -17,9 +17,9 @@ create table ccb.ConfigChangeBuild (
 	ModifiedVersion smallint default(0) not null,
 	ModifiedReason nvarchar(255) null)
 
-drop table if exists ccb.ConfigChangeBuildSummary
+drop table if exists ccb.ConfigChangeBuildDetail
 create table ccb.ConfigChangeBuildSummary (
-    ConfigChangeBuildSummaryID int identity(1,1) not null primary key,
+    ConfigChangeBuildDetailID int identity(1,1) not null primary key,
 	ConfigChangeBuildID int not null,
 	EntityTypeID tinyint not null,
 	EntityID bigint not null,
