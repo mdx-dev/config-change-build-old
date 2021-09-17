@@ -6,8 +6,8 @@ begin
 
 set nocount on
 
--- Grabbing ALL records for the chosen ConfigChangeBuildID from ccb.ConfigChangeBuildSummary
-drop table if exists #Build_Summary
+-- Grabbing ALL records for the chosen ConfigChangeBuildID from ccb.ConfigChangeBuildDetail
+drop table if exists #Build_Detail
 select bls.EntityTypeID
      , ent.EntityTypeName
 	 , bls.EntityID
@@ -21,9 +21,11 @@ select bls.EntityTypeID
 	 , bls.ConfigValueOld
 	 , bls.ChangeOperationID
 	 , cop.ChangeOperationName
-	 , bls.Ticket
-into #Build_Summary
-from ccb.ConfigChangeBuildSummary bls
+	 , ccb.Ticket
+into #Build_Detail
+from ccb.ConfigChangeBuildDetail bls
+     inner join ccb.ConfigChangeBuild ccb
+	         on ccb.ConfigChangeBuildID = bls.ConfigChangeBuildID
      inner join ccb.Config cfg
 	         on cfg.ConfigID = bls.ConfigID
 	 inner join ccb.ChangeOperation cop
@@ -32,30 +34,31 @@ from ccb.ConfigChangeBuildSummary bls
 	         on ent.EntityTypeID = bls.EntityTypeID
 	 left  join CAV22.dbo.TreatmentCodes tmc
 	         on bls.ProcedureID = (case when len(tmc.Code) = 5 then concat(9, tmc.Code) else tmc.Code end)
-where ConfigChangeBuildID = @build_id
+where bls.ConfigChangeBuildID = @build_id
 
 
 ---------------------------------------------------------------------------------------------------------------
 ------------------------------------------ CONFIGURATION CHANGES ----------------------------------------------
 ---------------------------------------------------------------------------------------------------------------
 
--- Grabbing build summary records pertaining to configurations and adding setting definitions necessary for config.Upsert procedures
+-- Grabbing build detail records pertaining to configurations and adding setting definitions necessary for config.Upsert procedures
 drop table if exists #Config_Upserts
 select EntityTypeName
      , EntityID
 	 , case when EntityTypeName in ('client', 'treatment_client') then cln.VitalsClientId else null end as VitalsClientId
      , case when EntityTypeName in ('plan', 'treatment_plan') then EntityID else null end as PlanId
-	 , TreatmentCode
+	 , bls.TreatmentCode
 	 , def.[Name] as SettingDefinitionName
 	 , def.SettingGroupKey
 	 , ctg.[Name] as SettingCategoryName
 	 , ConfigValueNew as SettingValue
-	 , ConfigValueOld as SettingValue_OLD
+	 , ConfigValueOld as SettingValue_Old_Build
+	 , cast(coalesce(tpv.SettingValue, tcv.SettingValue, psv.SettingValue, csv.SettingValue) as varchar) as SettingValue_Old_Actual
 	 , Ticket as ModifiedReason
 	 , ROW_NUMBER() over (order by EntityTypeName, EntityID, TreatmentCode, SettingGroupKey, def.[Name]) as config_step
 	 , 0 as config_step_complete
 into #Config_Upserts
-from #Build_Summary bls
+from #Build_Detail bls
      inner join CAV22.config.SettingDefinition def
 	         on def.[Name] = bls.ConfigName
 	 inner join CAV22.config.SettingCategory ctg
@@ -63,6 +66,24 @@ from #Build_Summary bls
 	 left  join CAV22.dbo.Clients cln
 	         on bls.EntityID = cln.Id
 			and bls.EntityTypeName in ('client', 'treatment_client')
+	 left  join CAV22.config.ClientSettingValue csv
+	         on csv.ClientId = bls.EntityID
+			and bls.EntityTypeName = 'client'
+			and csv.SettingDefinitionId = def.Id
+	 left  join CAV22.config.PlanSettingValue psv
+	         on psv.PlanId = bls.EntityID
+			and bls.EntityTypeName = 'plan'
+			and psv.SettingDefinitionId = def.Id
+	 left  join CAV22.config.TreatmentClientSettingValue tcv
+	         on tcv.ClientId = bls.EntityID
+			and bls.EntityTypeName = 'treatment_client'
+			and tcv.SettingDefinitionId = def.Id
+			and bls.ProcedureID = (case when len(tcv.TreatmentCode) = 5 then concat(9, tcv.TreatmentCode) else tcv.TreatmentCode end)
+	 left  join CAV22.config.TreatmentPlanSettingValue tpv
+	         on tpv.PlanId = bls.EntityID
+			and bls.EntityTypeName = 'treatment_plan'
+			and tpv.SettingDefinitionId = def.Id
+			and bls.ProcedureID = (case when len(tpv.TreatmentCode) = 5 then concat(9, tpv.TreatmentCode) else tpv.TreatmentCode end)
 where ConfigGroup = 'configuration'
 
 declare @config_step int
@@ -81,7 +102,7 @@ set @config_step = (select min(config_step) from #Config_Upserts)
 set @config_step_max = (select max(config_step) from #Config_Upserts)
 
 
--- This loop updates configurations via the config.Upsert procedures using the transformed configuration records from the build summary
+-- This loop updates configurations via the config.Upsert procedures using the transformed configuration records from the build detail
 while @config_step <= @config_step_max
 
 begin
@@ -151,7 +172,7 @@ end
 ----------------------------------------- INCENTIVE AMOUNTS CHANGES -------------------------------------------
 ---------------------------------------------------------------------------------------------------------------
 
--- Grabbing records from the build summary pertaining to Incentive Amounts and transforming them to fit into IncentiveAmounts
+-- Grabbing records from the build detail pertaining to Incentive Amounts and transforming them to fit into IncentiveAmounts
 drop table if exists #Incentive_Amount_Upserts
 select ChangeOperationID
 	 , ChangeOperationName
@@ -159,12 +180,14 @@ select ChangeOperationID
 	 , EntityName
      , ica.Id as IncentiveAmounts_Id
      , cast(ConfigValueNew as decimal(18,2)) as Amount
+	 , cast(ConfigValueOld as decimal(18,2)) as Amount_Old_Current
+	 , ica.Amount as Amount_Old_Actual
 	 , bls.ProcedureID as Procedure_Id
 	 , ict.Id as IncentiveTier_Id
 	 , 0 as incentive_step_complete
 	 , case when ica.ModifiedReason is not null then concat(ica.ModifiedReason, '; ', Ticket) else Ticket end as ModifiedReason
 into #Incentive_Amount_Upserts
-from #Build_Summary bls
+from #Build_Detail bls
      left  join CAV22.dbo.IncentiveTiers ict
 	         on ict.Plan_Id = bls.EntityID
 		        and ict.IsActive = 1
@@ -211,7 +234,7 @@ update ccb.ConfigChangeBuild
 set IsDeployed = 1, DateLastDeployed = getdate()
 where ConfigChangeBuildID = @build_id
 
-drop table if exists #Build_Summary
+drop table if exists #Build_Detail
 drop table if exists #Config_Upserts
 drop table if exists #Incentive_Amount_Upserts
 
