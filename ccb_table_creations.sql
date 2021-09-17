@@ -10,6 +10,7 @@ create table ccb.ConfigChangeBuild (
 	IsDeployed bit default(0) not null,
 	DateLastDeployed datetime null,
 	DateLastRolledBack datetime null,
+	Ticket varchar(30) null,
 	DateAdded datetime default(getdate()) not null,
 	AddedBy varchar(100) default(user) not null,
 	DateModified datetime null,
@@ -28,8 +29,7 @@ create table ccb.ConfigChangeBuildSummary (
 	ConfigID int not null,
 	ConfigValueNew nvarchar(255) null,
 	ConfigValueOld nvarchar(255) null,
-	ChangeOperationID tinyint not null,
-	Ticket varchar(20) not null)
+	ChangeOperationID tinyint not null)
 
 drop table if exists ccb.EntityType 
 create table ccb.EntityType (
