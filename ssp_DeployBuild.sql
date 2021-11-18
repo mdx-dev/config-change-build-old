@@ -1,10 +1,18 @@
-use CAV22
-go
-
 CREATE OR ALTER PROCEDURE tix.ccb_ssp_DeployBuild (
     @BuildID int
   , @IsRollback bit
 ) AS
+
+-- ==========================================================================================
+-- Description: Deploys builds. Will rollback is @IsRollback = 1
+--              Currently supports deployment and rollback of:
+--                  Configurations
+--                  Incentive Amounts            
+-- Parameters:
+--    @BuilID
+--    @IsRollback
+-- Returns:
+-- ==========================================================================================
 
 BEGIN
 SET NOCOUNT ON;
