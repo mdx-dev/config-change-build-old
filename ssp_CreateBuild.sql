@@ -7,6 +7,18 @@ CREATE OR ALTER PROCEDURE tix.ccb_ssp_CreateBuild (
   , @Notes varchar(255) = NULL
 ) AS
 
+-- ==========================================================================================
+-- Description: Recieves build detail records and then generates a record in tix.ccb_Build.
+--              After the build table record is made, the BuildID from that record is then
+--              used as the foreign key in tix.ccb_BuildDetail
+-- Parameters:
+--    @tix.ccb_ut_BuildDetail
+--        EntityTypeID, EntityID, ProcedureID, SettingValueNew, NULL as SettingValueOLD
+-- Returns:
+--    New record in tix.ccb_Build
+--    New records in tix.ccb_BuildDetail with the newly generated BuildID
+-- ==========================================================================================
+
 BEGIN
 SET NOCOUNT ON;
 
