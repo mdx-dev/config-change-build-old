@@ -1,9 +1,18 @@
-USE CAV22;
-GO
 
 CREATE OR ALTER PROCEDURE tix.ccb_ssp_GetCurrentSetting (
     @Detail_GetCurrentSetting tix.ccb_ut_BuildDetail READONLY
 ) AS
+
+-- ==========================================================================================
+-- Description: Recieves Build Detail records and returns the current settings for them.
+--              Is used in procedures that require checking current settings.
+-- Parameters:
+--    @tix.ccb_ut_BuildDetail
+--        EntityTypeID, EntityID, ProcedureID, SettingValueNew, NULL as SettingValueOLD
+-- Returns:
+--    @tix.ccb_ut_BuildDetail
+--        EntityTypeID, EntityID, ProcedureID, SettingValueNew, SettingValueOLD
+-- ==========================================================================================
 
 BEGIN
 SET NOCOUNT ON;
