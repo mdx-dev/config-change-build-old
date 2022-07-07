@@ -42,7 +42,7 @@ SET @enviornment = (SELECT CASE WHEN @@SERVERNAME = 'AWSVNHDBQA01'  AND DB_NAME(
 INSERT INTO tix.ccb_Build (BuildName, IsDeployed, DateLastDeployed, DateLastRolledBack, Ticket, ImportType, Enviornment, DateAdded, AddedBy, Notes)
 VALUES (@BuildName, 0, NULL, NULL, @Ticket, @ImportType, @Enviornment, CURRENT_TIMESTAMP, SUSER_NAME(), @Notes);
 
--- Captures the newly generated BuildID foruse in the BuilDetail table
+-- Captures the newly generated BuildID for use in the BuilDetail table
 SET @buildID = SCOPE_IDENTITY();
 
 -- If no Build Name is specified, the name assigned will be "Build {BuildID}"
